@@ -1,0 +1,10 @@
+{
+  "lookback_trades": 30,
+  "max_drawdown_bps": 1200,
+  "max_leverage": 3,
+  "min_signal_score": 0.55,
+  "risk_per_trade_bps": 100,
+  "target_win_rate": 0.55,
+  "updated_at": "2026-03-29T05:14:05.377521+00:00",
+  "version": 1
+}
