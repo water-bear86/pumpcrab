@@ -71,7 +71,7 @@ def request_json(
     url = base_url.rstrip("/") + route
     headers = {
         "Accept": "application/json",
-        "User-Agent": "pumpperps-trader-skill/1.1",
+        "User-Agent": "pumpcrab/1.1",
     }
     payload = None
     if body is not None:
@@ -345,7 +345,7 @@ def open_position(
         return
 
     if not cookie:
-        raise RuntimeError("PUMPPERPS_COOKIE is required for live trade execution")
+        raise RuntimeError("PUMPCRAB_COOKIE is required for live trade execution")
 
     response = request_json(
         base_url,
@@ -400,10 +400,10 @@ def cycle(args: argparse.Namespace, state: Dict[str, Any], paper_mode: bool, wal
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="PumpPerps trading loop with adaptive parameter tuning")
-    parser.add_argument("--base-url", default=os.getenv("PUMPPERPS_BASE_URL", "https://pumpperps.com"))
-    parser.add_argument("--cookie", default=os.getenv("PUMPPERPS_COOKIE"))
-    parser.add_argument("--wallet", default=os.getenv("PUMPPERPS_WALLET", ""))
+    parser = argparse.ArgumentParser(description="Pumpcrab trading loop for PumpPerps with adaptive parameter tuning")
+    parser.add_argument("--base-url", default=os.getenv("PUMPCRAB_BASE_URL", os.getenv("PUMPPERPS_BASE_URL", "https://pumpperps.com")))
+    parser.add_argument("--cookie", default=os.getenv("PUMPCRAB_COOKIE", os.getenv("PUMPPERPS_COOKIE")))
+    parser.add_argument("--wallet", default=os.getenv("PUMPCRAB_WALLET", os.getenv("PUMPPERPS_WALLET", "")))
     parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--sleep-seconds", type=int, default=5)
     parser.add_argument("--request-timeout", type=float, default=20.0)
@@ -462,14 +462,14 @@ def main() -> int:
             print("paper mode: no wallet provided, using placeholder wallet")
     else:
         if not wallet:
-            raise RuntimeError("PUMPPERPS_WALLET (or --wallet) is required for live trading")
+            raise RuntimeError("PUMPCRAB_WALLET (or --wallet) is required for live trading")
         if not is_probably_solana_pubkey(wallet):
             raise RuntimeError(
-                "PUMPPERPS_WALLET must be a Solana public address (base58, 32-byte). "
+                "PUMPCRAB_WALLET must be a Solana public address (base58, 32-byte). "
                 "Do not pass a private key or seed value."
             )
         if not args.cookie:
-            raise RuntimeError("PUMPPERPS_COOKIE (or --cookie) is required for live trading")
+            raise RuntimeError("PUMPCRAB_COOKIE (or --cookie) is required for live trading")
 
     print(f"mode={'paper' if paper_mode else 'live'}")
 

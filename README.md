@@ -1,4 +1,4 @@
-# PumpPerps Trader Skill
+# Pumpcrab Skill
 
 A Codex skill and runnable Python loop for PumpPerps automation with strict safety defaults:
 
@@ -27,7 +27,7 @@ A Codex skill and runnable Python loop for PumpPerps automation with strict safe
 ### Quick start
 
 ```bash
-cd /tmp/pumpperps-trader-skill
+cd /tmp/pumpcrab
 python3 scripts/quick_validate.py
 python3 scripts/trader_loop.py --cycles 1
 ```
@@ -45,8 +45,8 @@ python3 scripts/trader_loop.py --cycles 9999 --sleep-seconds 15
 ### Live mode example
 
 ```bash
-PUMPPERPS_WALLET=<your_public_wallet> \
-PUMPPERPS_COOKIE='<session_cookie>' \
+PUMPCRAB_WALLET=<your_public_wallet> \
+PUMPCRAB_COOKIE='<session_cookie>' \
 python3 scripts/trader_loop.py --live --cycles 1
 ```
 
