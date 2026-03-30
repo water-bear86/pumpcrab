@@ -1,9 +1,9 @@
 ---
-name: pumpcrab
+name: perpcrab
 description: Use this skill to activate immediate paper trading on PumpPerps, continuously self-improve strategy settings from trade history, and only switch to live trading after explicit user confirmation plus wallet/session credentials.
 ---
 
-# Pumpcrab
+# Perpcrab
 
 Use this skill when the user asks to automate or run trading on PumpPerps.
 

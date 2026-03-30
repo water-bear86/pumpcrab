@@ -72,7 +72,7 @@ def request_json(
     url = base_url.rstrip("/") + route
     headers = {
         "Accept": "application/json",
-        "User-Agent": "pumpcrab/1.3",
+        "User-Agent": "perpcrab/1.4",
     }
     payload = None
     if body is not None:
@@ -272,7 +272,7 @@ def llm_trade_decision(
 ) -> Dict[str, Any]:
     api_key = args.llm_api_key
     if not api_key:
-        raise RuntimeError("LLM decision required but PUMPCRAB_OPENAI_API_KEY / OPENAI_API_KEY is missing")
+        raise RuntimeError("LLM decision required but PERPCRAB_OPENAI_API_KEY / PUMPCRAB_OPENAI_API_KEY / OPENAI_API_KEY is missing")
 
     if not candidates:
         raise RuntimeError("No candidates available for LLM decision")
@@ -326,7 +326,7 @@ def llm_trade_decision(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "pumpcrab/1.3",
+            "User-Agent": "perpcrab/1.4",
         },
         method="POST",
     )
@@ -455,7 +455,7 @@ def open_position(
         return payload
 
     if not cookie:
-        raise RuntimeError("PUMPCRAB_COOKIE is required for live trade execution")
+        raise RuntimeError("PERPCRAB_COOKIE is required for live trade execution")
 
     response = request_json(
         base_url,
@@ -606,10 +606,10 @@ def cycle(args: argparse.Namespace, state: Dict[str, Any], paper_mode: bool, wal
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pumpcrab trading loop for PumpPerps with mandatory LLM decisions")
-    parser.add_argument("--base-url", default=os.getenv("PUMPCRAB_BASE_URL", os.getenv("PUMPPERPS_BASE_URL", "https://pumpperps.com")))
-    parser.add_argument("--cookie", default=os.getenv("PUMPCRAB_COOKIE", os.getenv("PUMPPERPS_COOKIE")))
-    parser.add_argument("--wallet", default=os.getenv("PUMPCRAB_WALLET", os.getenv("PUMPPERPS_WALLET", "")))
+    parser = argparse.ArgumentParser(description="Perpcrab trading loop for PumpPerps with mandatory LLM decisions")
+    parser.add_argument("--base-url", default=os.getenv("PERPCRAB_BASE_URL", os.getenv("PUMPCRAB_BASE_URL", os.getenv("PUMPPERPS_BASE_URL", "https://pumpperps.com"))))
+    parser.add_argument("--cookie", default=os.getenv("PERPCRAB_COOKIE", os.getenv("PUMPCRAB_COOKIE", os.getenv("PUMPPERPS_COOKIE"))))
+    parser.add_argument("--wallet", default=os.getenv("PERPCRAB_WALLET", os.getenv("PUMPCRAB_WALLET", os.getenv("PUMPPERPS_WALLET", ""))))
     parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--sleep-seconds", type=int, default=5)
     parser.add_argument("--request-timeout", type=float, default=20.0)
@@ -619,11 +619,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--improve-only", action="store_true")
     parser.add_argument("--record-sample", action="store_true", help="append a synthetic closed trade sample for testing adaptation")
 
-    parser.add_argument("--llm-model", default=os.getenv("PUMPCRAB_LLM_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini")))
-    parser.add_argument("--llm-api-base", default=os.getenv("PUMPCRAB_LLM_API_BASE", "https://api.openai.com/v1"))
-    parser.add_argument("--llm-api-key", default=os.getenv("PUMPCRAB_OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "")))
-    parser.add_argument("--llm-timeout", type=float, default=float(os.getenv("PUMPCRAB_LLM_TIMEOUT", "25")))
-    parser.add_argument("--llm-candidate-count", type=int, default=int(os.getenv("PUMPCRAB_LLM_CANDIDATE_COUNT", "12")))
+    parser.add_argument("--llm-model", default=os.getenv("PERPCRAB_LLM_MODEL", os.getenv("PUMPCRAB_LLM_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))))
+    parser.add_argument("--llm-api-base", default=os.getenv("PERPCRAB_LLM_API_BASE", os.getenv("PUMPCRAB_LLM_API_BASE", "https://api.openai.com/v1")))
+    parser.add_argument("--llm-api-key", default=os.getenv("PERPCRAB_OPENAI_API_KEY", os.getenv("PUMPCRAB_OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))))
+    parser.add_argument("--llm-timeout", type=float, default=float(os.getenv("PERPCRAB_LLM_TIMEOUT", os.getenv("PUMPCRAB_LLM_TIMEOUT", "25"))))
+    parser.add_argument("--llm-candidate-count", type=int, default=int(os.getenv("PERPCRAB_LLM_CANDIDATE_COUNT", os.getenv("PUMPCRAB_LLM_CANDIDATE_COUNT", "12"))))
     return parser.parse_args()
 
 
@@ -674,14 +674,14 @@ def main() -> int:
             print("paper mode: no wallet provided, using placeholder wallet")
     else:
         if not wallet:
-            raise RuntimeError("PUMPCRAB_WALLET (or --wallet) is required for live trading")
+            raise RuntimeError("PERPCRAB_WALLET (or --wallet) is required for live trading")
         if not is_probably_solana_pubkey(wallet):
             raise RuntimeError(
-                "PUMPCRAB_WALLET must be a Solana public address (base58, 32-byte). "
+                "PERPCRAB_WALLET must be a Solana public address (base58, 32-byte). "
                 "Do not pass a private key or seed value."
             )
         if not args.cookie:
-            raise RuntimeError("PUMPCRAB_COOKIE (or --cookie) is required for live trading")
+            raise RuntimeError("PERPCRAB_COOKIE (or --cookie) is required for live trading")
 
     print(f"mode={'paper' if paper_mode else 'live'}")
 

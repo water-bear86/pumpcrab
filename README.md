@@ -1,6 +1,6 @@
-# Pumpcrab Skill
+# Perpcrab Skill
 
-![Pumpcrab Logo](assets/skillperppump.png)
+![Perpcrab Logo](assets/skillperppump.png)
 
 A Codex skill and runnable Python loop for PumpPerps automation with strict safety defaults:
 
@@ -29,7 +29,7 @@ A Codex skill and runnable Python loop for PumpPerps automation with strict safe
 ### Quick start
 
 ```bash
-cd /tmp/pumpcrab
+cd /tmp/perpcrab
 python3 scripts/quick_validate.py
 python3 scripts/trader_loop.py --cycles 1
 ```
@@ -63,8 +63,8 @@ Stop safely with `Ctrl+C` and restart with the same command.
 ### Live mode example
 
 ```bash
-PUMPCRAB_WALLET=<your_public_wallet> \
-PUMPCRAB_COOKIE='<session_cookie>' \
+PERPCRAB_WALLET=<your_public_wallet> \
+PERPCRAB_COOKIE='<session_cookie>' \
 python3 scripts/trader_loop.py --live --cycles 1
 ```
 
