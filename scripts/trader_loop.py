@@ -53,6 +53,7 @@ TUI_JUNCTION = "▣"
 TUI_SHADE_LIGHT = "░"
 TUI_SHADE_MEDIUM = "▒"
 TUI_SHADE_DARK = "▓"
+SPINNER_FRAMES = ("◜", "◠", "◝", "◞", "◡", "◟")
 
 
 def now_iso() -> str:
@@ -325,6 +326,11 @@ def wrap_text(text: str, width: int = 80) -> List[str]:
     return lines
 
 
+def spinner_char(offset: int = 0) -> str:
+    idx = (int(time.time() * 4) + offset) % len(SPINNER_FRAMES)
+    return SPINNER_FRAMES[idx]
+
+
 def short_token(value: Any) -> str:
     token = str(value or "-")
     if len(token) <= 16:
@@ -469,8 +475,10 @@ def render_dashboard(
     render_brand_block(board_width)
 
     mode_label = "paper" if paper_mode else "live"
+    spin = spinner_char(cycle_index)
+    phase = "HALT" if halted else ("ERR" if last_error else "RUN")
     header_line = (
-        f"PERPCRAB DOS BOARD | mode={mode_label} | cycle={cycle_index}/{total_cycles} | "
+        f"{spin} PERPCRAB DOS BOARD [{phase}] | mode={mode_label} | cycle={cycle_index}/{total_cycles} | "
         f"model={args.llm_model} | {now_iso()}"
     )
     print(color_text(truncate_text(header_line, board_width), "bold"))
@@ -491,7 +499,7 @@ def render_dashboard(
         ["win rate", f"{win_rate:.1%}"],
     ]
     session_panel = make_fixed_table_panel(
-        "SESSION",
+        f"SESSION {spinner_char(1)}",
         ["FIELD", "VALUE"],
         session_rows,
         panel_width=left_panel_width,
@@ -507,7 +515,7 @@ def render_dashboard(
         ["errors", cycle_activity.get("errors", 0)],
     ]
     activity_panel = make_fixed_table_panel(
-        "CYCLE",
+        f"CYCLE {spinner_char(2)}",
         ["METRIC", "COUNT"],
         activity_rows,
         panel_width=right_panel_width,
@@ -528,7 +536,7 @@ def render_dashboard(
     if not event_rows:
         event_rows = [[1, "(no events yet)"]]
     event_panel = make_fixed_table_panel(
-        "EVENT STREAM",
+        f"EVENT STREAM {spinner_char(3)}",
         ["#", "EVENT"],
         event_rows,
         panel_width=full_panel_width,
@@ -594,7 +602,7 @@ def render_dashboard(
     reasoning_lines = wrap_text(reasoning, width=max(20, full_panel_width - 14))
     reasoning_rows = [[idx + 1, line] for idx, line in enumerate(reasoning_lines[:4])]
     reasoning_panel = make_fixed_table_panel(
-        "LATEST LLM REASONING",
+        f"LATEST LLM REASONING {spinner_char(4)}",
         ["#", "TEXT"],
         reasoning_rows,
         panel_width=full_panel_width,
@@ -624,7 +632,7 @@ def render_dashboard(
         error_lines = wrap_text(sanitize_text(last_error), width=max(20, full_panel_width - 14))
         error_rows = [[idx + 1, line] for idx, line in enumerate(error_lines[:6])]
         error_panel = make_fixed_table_panel(
-            "LAST ERROR (FULL)",
+            f"LAST ERROR (FULL) {spinner_char(5)}",
             ["#", "TEXT"],
             error_rows,
             panel_width=full_panel_width,
