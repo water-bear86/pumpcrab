@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
 from datetime import datetime, timezone
@@ -29,6 +30,14 @@ BRAND_ART = [
     "░░▀██▄▄▄▄██PERP██▄▄▄▄██▀░░",
     "░░░░░▄▄▄▄█░CRAB░█▄▄▄▄░░░░░",
     "░░░░▞▐▀▐▀░▀██████▀░▀▌▚░░░░",
+]
+
+FALLBACK_BRAND_ART = [
+    r"  ____  _____ ____  ____   ____ ____      _    ____  ",
+    r" |  _ \| ____|  _ \|  _ \ / ___|  _ \    / \  | __ ) ",
+    r" | |_) |  _| | |_) | |_) | |   | |_) |  / _ \ |  _ \ ",
+    r" |  __/| |___|  _ <|  __/| |___|  _ <  / ___ \| |_) |",
+    r" |_|   |_____|_| \_\_|    \____|_| \_\/_/   \_\____/ ",
 ]
 
 
@@ -148,86 +157,129 @@ def bicolor_text(text: str, left_color: str = "green", right_color: str = "red")
     return left + right
 
 
-def render_brand_block() -> None:
-    for line in BRAND_ART:
-        print(bicolor_text(line, "green", "red"))
+def render_brand_block(width: int) -> None:
+    try:
+        for line in BRAND_ART:
+            centered = line[:width].center(width)
+            print(bicolor_text(centered, "green", "red"))
+    except UnicodeEncodeError:
+        for line in FALLBACK_BRAND_ART:
+            print(color_text(line[:width].center(width), "cyan"))
     print()
 
 
+def sanitize_text(value: Any) -> str:
+    text = str(value) if value is not None else ""
+    text = text.replace("\r", " ").replace("\n", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def truncate_text(value: Any, width: int) -> str:
-    text = str(value)
+    text = sanitize_text(value)
     if width <= 0:
         return ""
     if len(text) <= width:
         return text
     if width == 1:
         return text[:1]
-    return text[: width - 1] + "…"
+    if width <= 3:
+        return text[:width]
+    return text[: width - 3] + "..."
 
 
-def build_table_lines(
-    headers: List[str],
-    rows: List[List[Any]],
-    aligns: Optional[List[str]] = None,
-    max_col_width: int = 44,
-) -> Tuple[List[str], List[int]]:
-    col_count = len(headers)
-    widths = [min(max(4, len(str(h))), max_col_width) for h in headers]
+def fit_column_widths(panel_width: int, min_widths: List[int]) -> List[int]:
+    count = len(min_widths)
+    if count <= 0:
+        return []
+    available = max(4 * count, panel_width - (3 * count + 1))
+    widths = [max(4, int(w)) for w in min_widths]
+    total = sum(widths)
+    if total < available:
+        widths[-1] += available - total
+        return widths
 
-    for row in rows:
-        for i in range(col_count):
-            cell = row[i] if i < len(row) else ""
-            widths[i] = min(max(widths[i], len(str(cell))), max_col_width)
-
-    def _format_row(row: List[Any]) -> str:
-        cells: List[str] = []
-        for i, width in enumerate(widths):
-            align = aligns[i] if aligns and i < len(aligns) else "left"
-            value = row[i] if i < len(row) else ""
-            text = truncate_text(value, width)
-            if align == "right":
-                padded = text.rjust(width)
-            elif align == "center":
-                padded = text.center(width)
-            else:
-                padded = text.ljust(width)
-            cells.append(f" {padded} ")
-        return "│" + "│".join(cells) + "│"
-
-    top = "┌" + "┬".join("─" * (w + 2) for w in widths) + "┐"
-    mid = "├" + "┼".join("─" * (w + 2) for w in widths) + "┤"
-    bot = "└" + "┴".join("─" * (w + 2) for w in widths) + "┘"
-
-    lines = [top, _format_row(headers), mid]
-    lines.extend(_format_row(r) for r in rows)
-    lines.append(bot)
-    return lines, widths
+    overflow = total - available
+    for idx in reversed(range(count)):
+        shrink = min(overflow, max(0, widths[idx] - 4))
+        widths[idx] -= shrink
+        overflow -= shrink
+        if overflow <= 0:
+            break
+    if overflow > 0:
+        widths[-1] = max(1, widths[-1] - overflow)
+    return widths
 
 
-def render_table(
+def align_cell(value: Any, width: int, align: str) -> str:
+    text = truncate_text(value, width)
+    if align == "right":
+        return text.rjust(width)
+    if align == "center":
+        return text.center(width)
+    return text.ljust(width)
+
+
+def make_fixed_table_panel(
     title: str,
     headers: List[str],
     rows: List[List[Any]],
+    panel_width: int,
+    min_col_widths: List[int],
     aligns: Optional[List[str]] = None,
-    row_colors: Optional[List[str]] = None,
-    max_col_width: int = 44,
-) -> None:
-    print(color_text(title, "bold"))
-    lines, _ = build_table_lines(headers, rows, aligns=aligns, max_col_width=max_col_width)
-    for idx, line in enumerate(lines):
-        if idx in {0, 2, len(lines) - 1}:
-            print(color_text(line, "dim"))
-            continue
-        data_row_idx = idx - 3
-        if row_colors and 0 <= data_row_idx < len(row_colors) and row_colors[data_row_idx]:
-            print(color_text(line, row_colors[data_row_idx]))
-        else:
-            print(line)
-    print()
+    max_rows: int = 6,
+) -> List[str]:
+    widths = fit_column_widths(panel_width, min_col_widths)
+    col_count = len(widths)
+
+    title_label = f" {title} "
+    title_space = max(0, panel_width - 2 - len(title_label))
+    left = title_space // 2
+    right = title_space - left
+    title_line = "+" + ("-" * left) + title_label + ("-" * right) + "+"
+
+    sep = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
+    header_line = "|" + "|".join(
+        f" {align_cell(headers[i] if i < len(headers) else '', widths[i], 'center')} "
+        for i in range(col_count)
+    ) + "|"
+
+    normalized_rows: List[List[Any]] = []
+    for row in rows[:max_rows]:
+        normalized_rows.append([sanitize_text(row[i] if i < len(row) else "") for i in range(col_count)])
+    while len(normalized_rows) < max_rows:
+        normalized_rows.append(["" for _ in range(col_count)])
+
+    body_lines = []
+    for row in normalized_rows:
+        body = "|" + "|".join(
+            f" {align_cell(row[i], widths[i], aligns[i] if aligns and i < len(aligns) else 'left')} "
+            for i in range(col_count)
+        ) + "|"
+        body_lines.append(body)
+
+    lines = [title_line, sep, header_line, sep]
+    lines.extend(body_lines)
+    lines.append(sep)
+    return lines
+
+
+def combine_panels(left: List[str], right: List[str], gap: int = 3) -> List[str]:
+    left_width = max((len(line) for line in left), default=0)
+    right_width = max((len(line) for line in right), default=0)
+    count = max(len(left), len(right))
+    out: List[str] = []
+    spacer = " " * gap
+    for idx in range(count):
+        l = left[idx] if idx < len(left) else ""
+        r = right[idx] if idx < len(right) else ""
+        out.append(l.ljust(left_width) + spacer + r.ljust(right_width))
+    return out
 
 
 def wrap_text(text: str, width: int = 80) -> List[str]:
-    tokens = text.split()
+    cleaned = sanitize_text(text)
+    tokens = cleaned.split()
     if not tokens:
         return [""]
     lines: List[str] = []
@@ -354,6 +406,19 @@ def render_dashboard(
     cycle_activity: Optional[Dict[str, int]] = None,
     recent_events: Optional[List[str]] = None,
 ) -> None:
+    term_width = shutil.get_terminal_size(fallback=(120, 40)).columns
+    two_col = term_width >= 108
+    if two_col:
+        board_width = min(140, max(108, term_width - 1))
+        left_panel_width = (board_width - 3) // 2
+        right_panel_width = board_width - 3 - left_panel_width
+        full_panel_width = board_width
+    else:
+        board_width = min(120, max(88, term_width - 1))
+        left_panel_width = board_width
+        right_panel_width = board_width
+        full_panel_width = board_width
+
     open_positions = load_paper_positions(PAPER_POSITIONS_PATH)
     history = load_history(HISTORY_PATH)
     closed = [x for x in history if x.get("status") == "closed"]
@@ -375,28 +440,42 @@ def render_dashboard(
             break
 
     if supports_color():
-        print("[2J[H", end="")
+        print("\033[2J\033[H", end="")
 
-    render_brand_block()
+    render_brand_block(board_width)
 
     mode_label = "paper" if paper_mode else "live"
+    header_line = (
+        f"PERPCRAB DOS BOARD | mode={mode_label} | cycle={cycle_index}/{total_cycles} | "
+        f"model={args.llm_model} | {now_iso()}"
+    )
+    print(color_text(truncate_text(header_line, board_width), "bold"))
+    print(color_text("-" * board_width, "dim"))
+
     if cycle_activity is None:
         cycle_activity = {"opened": 0, "closed": 0, "skipped": 0, "errors": 0}
 
     session_rows = [
         ["mode", mode_label],
         ["cycle", f"{cycle_index}/{total_cycles}"],
-        ["timestamp", now_iso()],
         ["wallet", mask_value(wallet)],
-        ["llm model", args.llm_model],
         ["kelly", state.get("kelly_fraction", args.kelly_fraction)],
         ["risk bps", state.get("risk_per_trade_bps")],
         ["open positions", len(open_positions)],
         ["closed trades", total_closed],
         ["win/loss", f"{wins}/{losses}"],
         ["win rate", f"{win_rate:.1%}"],
+        ["timestamp", now_iso()],
     ]
-    render_table("Session", ["Field", "Value"], session_rows, max_col_width=56)
+    session_panel = make_fixed_table_panel(
+        "SESSION",
+        ["FIELD", "VALUE"],
+        session_rows,
+        panel_width=left_panel_width,
+        min_col_widths=[14, 30],
+        aligns=["left", "left"],
+        max_rows=10,
+    )
 
     activity_rows = [
         ["opened", cycle_activity.get("opened", 0)],
@@ -404,40 +483,38 @@ def render_dashboard(
         ["skipped", cycle_activity.get("skipped", 0)],
         ["errors", cycle_activity.get("errors", 0)],
     ]
-    render_table("Cycle Activity", ["Metric", "Count"], activity_rows, aligns=["left", "right"])
+    activity_panel = make_fixed_table_panel(
+        "CYCLE",
+        ["METRIC", "COUNT"],
+        activity_rows,
+        panel_width=right_panel_width,
+        min_col_widths=[14, 8],
+        aligns=["left", "right"],
+        max_rows=6,
+    )
 
-    event_items = list(recent_events or [])[-8:]
+    event_items = [sanitize_text(item) for item in list(recent_events or [])[-8:]]
     if last_error:
-        event_items.append(f"ERROR: {last_error}")
+        event_items.append(f"ERROR: {sanitize_text(last_error)}")
     elif last_event:
-        event_items.append(f"INFO: {last_event}")
+        event_items.append(f"INFO: {sanitize_text(last_event)}")
     elif halted:
         event_items.append("ERROR: loop halted due to consecutive failures")
 
     event_rows = [[idx + 1, ev] for idx, ev in enumerate(event_items[-8:])]
-    event_colors = []
-    for _, ev in event_rows:
-        low = str(ev).lower()
-        if "error" in low or "failure" in low:
-            event_colors.append("red")
-        elif "opened" in low or "take_profit" in low or "win" in low:
-            event_colors.append("green")
-        else:
-            event_colors.append("cyan")
     if not event_rows:
         event_rows = [[1, "(no events yet)"]]
-        event_colors = ["dim"]
-    render_table(
-        "Event Stream",
-        ["#", "Event"],
+    event_panel = make_fixed_table_panel(
+        "EVENT STREAM",
+        ["#", "EVENT"],
         event_rows,
+        panel_width=full_panel_width,
+        min_col_widths=[4, 40],
         aligns=["right", "left"],
-        row_colors=event_colors,
-        max_col_width=80,
+        max_rows=8,
     )
 
     open_rows: List[List[Any]] = []
-    open_colors: List[str] = []
     for pos in open_positions[-10:]:
         pnl_bps = safe_float(pos.get("unrealized_pnl_bps"), 0.0)
         pnl_usd = safe_float(pos.get("unrealized_pnl_usd"), 0.0)
@@ -447,26 +524,23 @@ def render_dashboard(
                 pos.get("side"),
                 pos.get("leverage"),
                 pos.get("age_seconds", "-"),
+                f"{pnl_usd:.2f}USD",
                 f"{pnl_bps:.2f}",
-                f"{pnl_usd:.2f}",
-                pos.get("opened_at", "-"),
             ]
         )
-        open_colors.append("green" if pnl_usd >= 0 else "red")
     if not open_rows:
-        open_rows = [["-", "-", "-", "-", "-", "-", "(none)"]]
-        open_colors = ["dim"]
-    render_table(
-        "Open Positions",
-        ["Token", "Side", "Lev", "Age(s)", "uPnL bps", "uPnL USD", "Opened"],
+        open_rows = [["-", "-", "-", "-", "-", "-"]]
+    open_panel = make_fixed_table_panel(
+        "OPEN POSITIONS",
+        ["TOKEN", "SIDE", "L", "AGE", "UPNL", "BPS"],
         open_rows,
-        aligns=["left", "left", "right", "right", "right", "right", "left"],
-        row_colors=open_colors,
-        max_col_width=30,
+        panel_width=left_panel_width,
+        min_col_widths=[10, 6, 3, 6, 11, 10],
+        aligns=["left", "left", "right", "right", "right", "right"],
+        max_rows=8,
     )
 
     closed_rows: List[List[Any]] = []
-    closed_colors: List[str] = []
     for row in recent_closed:
         pnl_usd = safe_float(row.get("pnl_usd"), 0.0)
         pnl_bps = safe_float(row.get("pnl_bps"), 0.0)
@@ -475,38 +549,55 @@ def render_dashboard(
         closed_rows.append(
             [
                 result,
-                short_token(row.get("tokenMint")),
+                short_token(row.get("tokenMint", "-")),
                 reason,
                 f"{pnl_bps:.2f}",
-                f"{pnl_usd:.2f}",
-                row.get("opened_at", "-"),
-                row.get("closed_at", "-"),
+                f"{pnl_usd:.2f}USD",
             ]
         )
-        closed_colors.append("green" if pnl_usd > 0 else "red")
     if not closed_rows:
-        closed_rows = [["-", "-", "-", "-", "-", "-", "(none)"]]
-        closed_colors = ["dim"]
-    render_table(
-        "Recent Closed Positions",
-        ["Result", "Token", "Reason", "PnL bps", "PnL USD", "Opened", "Closed"],
+        closed_rows = [["-", "-", "-", "-", "-"]]
+    closed_panel = make_fixed_table_panel(
+        "CLOSED POSITIONS",
+        ["R", "TOKEN", "REASON", "BPS", "PNL"],
         closed_rows,
-        aligns=["left", "left", "left", "right", "right", "left", "left"],
-        row_colors=closed_colors,
-        max_col_width=30,
+        panel_width=right_panel_width,
+        min_col_widths=[3, 10, 12, 8, 12],
+        aligns=["left", "left", "left", "right", "right"],
+        max_rows=8,
     )
 
     reasoning = latest_rationale if latest_rationale else "(no rationale captured yet)"
-    reasoning_lines = wrap_text(reasoning, width=78)
+    reasoning_lines = wrap_text(reasoning, width=max(20, full_panel_width - 14))
     reasoning_rows = [[idx + 1, line] for idx, line in enumerate(reasoning_lines[:8])]
-    render_table(
-        "Latest LLM Reasoning",
-        ["Ln", "Text"],
+    reasoning_panel = make_fixed_table_panel(
+        "LATEST LLM REASONING",
+        ["#", "TEXT"],
         reasoning_rows,
+        panel_width=full_panel_width,
+        min_col_widths=[4, 40],
         aligns=["right", "left"],
-        max_col_width=78,
+        max_rows=8,
     )
 
+    if two_col:
+        for line in combine_panels(session_panel, activity_panel):
+            print(line)
+        print()
+        for line in combine_panels(open_panel, closed_panel):
+            print(line)
+        print()
+    else:
+        for panel in (session_panel, activity_panel, open_panel, closed_panel):
+            for line in panel:
+                print(line)
+            print()
+
+    for line in event_panel:
+        print(line)
+    print()
+    for line in reasoning_panel:
+        print(line)
 
 
 def request_json(
