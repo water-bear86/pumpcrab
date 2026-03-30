@@ -399,7 +399,7 @@ def render_dashboard(
     paper_mode: bool,
     wallet: str,
     cycle_index: int,
-    total_cycles: int,
+    total_cycles: Any,
     last_event: str = "",
     last_error: str = "",
     halted: bool = False,
@@ -1320,7 +1320,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default=os.getenv("PERPCRAB_BASE_URL", os.getenv("PUMPCRAB_BASE_URL", os.getenv("PUMPPERPS_BASE_URL", "https://pumpperps.com"))))
     parser.add_argument("--cookie", default=os.getenv("PERPCRAB_COOKIE", os.getenv("PUMPCRAB_COOKIE", os.getenv("PUMPPERPS_COOKIE"))))
     parser.add_argument("--wallet", default=os.getenv("PERPCRAB_WALLET", os.getenv("PUMPCRAB_WALLET", os.getenv("PUMPPERPS_WALLET", ""))))
-    parser.add_argument("--cycles", type=int, default=1)
+    parser.add_argument(
+        "--cycles",
+        type=int,
+        default=int(os.getenv("PERPCRAB_CYCLES", os.getenv("PUMPCRAB_CYCLES", "0"))),
+        help="number of cycles to run; 0 means run continuously until stopped",
+    )
     parser.add_argument("--sleep-seconds", type=int, default=5)
     parser.add_argument("--request-timeout", type=float, default=20.0)
     parser.add_argument("--request-retries", type=int, default=2)
@@ -1443,20 +1448,29 @@ def main() -> int:
         if not args.cookie:
             raise RuntimeError("PERPCRAB_COOKIE (or --cookie) is required for live trading")
 
-    total_cycles = max(1, args.cycles)
+    run_forever = args.cycles <= 0
+    cycle_limit = None if run_forever else max(1, args.cycles)
+    cycle_total_label: Any = "∞" if run_forever else cycle_limit
+
     if not args.dashboard:
-        print(f"mode={'paper' if paper_mode else 'live'}")
+        mode_label = 'paper' if paper_mode else 'live'
+        if run_forever:
+            print(f"mode={mode_label} cycles=continuous")
+        else:
+            print(f"mode={mode_label}")
     else:
         initial_event = "interactive setup complete"
         if auto_fast_profile:
             initial_event += " | dashboard fast profile enabled"
+        if run_forever:
+            initial_event += " | loop=continuous"
         render_dashboard(
             args,
             state,
             paper_mode,
             wallet,
             cycle_index=0,
-            total_cycles=total_cycles,
+            total_cycles=cycle_total_label,
             last_event=initial_event,
         )
 
@@ -1468,62 +1482,72 @@ def main() -> int:
     cycle_activity = {"opened": 0, "closed": 0, "skipped": 0, "errors": 0}
     recent_events: List[str] = []
 
-    for i in range(total_cycles):
-        current_cycle = i + 1
-        if not args.dashboard:
-            print(f"cycle {current_cycle}/{args.cycles} @ {now_iso()}")
-
-        last_error = ""
-        cycle_activity = {"opened": 0, "closed": 0, "skipped": 0, "errors": 0}
-        try:
-            if args.dashboard:
-                cycle_buffer = io.StringIO()
-                with contextlib.redirect_stdout(cycle_buffer):
-                    cycle(args, state, paper_mode, wallet)
-                cycle_output = cycle_buffer.getvalue().strip()
-                if cycle_output:
-                    headline, cycle_activity, cycle_events = parse_cycle_output(cycle_output)
-                    last_event = headline
-                    recent_events.extend(cycle_events)
-                    recent_events = recent_events[-20:]
-            else:
-                cycle(args, state, paper_mode, wallet)
-        except RuntimeError as exc:
-            consecutive_failures += 1
-            last_error = str(exc)
-            cycle_activity["errors"] += 1
+    try:
+        while True:
+            current_cycle += 1
             if not args.dashboard:
-                print(f"cycle failure {consecutive_failures}/3: {exc}")
-            else:
-                recent_events.append(f"cycle failure {consecutive_failures}/3: {exc}")
-                recent_events = recent_events[-20:]
-            if consecutive_failures > 2:
+                print(f"cycle {current_cycle}/{cycle_total_label} @ {now_iso()}")
+
+            last_error = ""
+            cycle_activity = {"opened": 0, "closed": 0, "skipped": 0, "errors": 0}
+            try:
+                if args.dashboard:
+                    cycle_buffer = io.StringIO()
+                    with contextlib.redirect_stdout(cycle_buffer):
+                        cycle(args, state, paper_mode, wallet)
+                    cycle_output = cycle_buffer.getvalue().strip()
+                    if cycle_output:
+                        headline, cycle_activity, cycle_events = parse_cycle_output(cycle_output)
+                        last_event = headline
+                        recent_events.extend(cycle_events)
+                        recent_events = recent_events[-20:]
+                else:
+                    cycle(args, state, paper_mode, wallet)
+            except RuntimeError as exc:
+                consecutive_failures += 1
+                last_error = str(exc)
+                cycle_activity["errors"] += 1
                 if not args.dashboard:
-                    print("stopping trader loop: more than two consecutive failures")
-                halted = True
-        else:
-            consecutive_failures = 0
+                    print(f"cycle failure {consecutive_failures}/3: {exc}")
+                else:
+                    recent_events.append(f"cycle failure {consecutive_failures}/3: {exc}")
+                    recent_events = recent_events[-20:]
+                if consecutive_failures > 2:
+                    if not args.dashboard:
+                        print("stopping trader loop: more than two consecutive failures")
+                    halted = True
+            else:
+                consecutive_failures = 0
 
-        if args.dashboard:
-            render_dashboard(
-                args,
-                state,
-                paper_mode,
-                wallet,
-                cycle_index=current_cycle,
-                total_cycles=total_cycles,
-                last_event=last_event,
-                last_error=last_error,
-                halted=halted,
-                cycle_activity=cycle_activity,
-                recent_events=recent_events,
-            )
+            if args.dashboard:
+                render_dashboard(
+                    args,
+                    state,
+                    paper_mode,
+                    wallet,
+                    cycle_index=current_cycle,
+                    total_cycles=cycle_total_label,
+                    last_event=last_event,
+                    last_error=last_error,
+                    halted=halted,
+                    cycle_activity=cycle_activity,
+                    recent_events=recent_events,
+                )
 
-        if halted:
-            break
+            if halted:
+                break
 
-        if i + 1 < total_cycles:
+            if cycle_limit is not None and current_cycle >= cycle_limit:
+                break
+
             time.sleep(max(args.sleep_seconds, 0))
+    except KeyboardInterrupt:
+        halted = True
+        if args.dashboard:
+            recent_events.append("loop interrupted by user")
+            recent_events = recent_events[-20:]
+        else:
+            print("stopping trader loop: interrupted by user")
 
     new_state = improve(state, load_history(HISTORY_PATH))
     save_json(STATE_PATH, new_state)
@@ -1536,7 +1560,7 @@ def main() -> int:
             paper_mode,
             wallet,
             cycle_index=current_cycle,
-            total_cycles=total_cycles,
+            total_cycles=cycle_total_label,
             last_event="saved strategy state",
             halted=halted,
             cycle_activity=cycle_activity,
