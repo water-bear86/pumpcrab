@@ -23,23 +23,12 @@ BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 PAPER_WALLET = "PAPER_TRADING_WALLET"
 PAPER_POSITIONS_PATH = DATA_DIR / "paper_positions.json"
 
-FIGLET_BANNER = [
-    r" ____  _____ ____  ____   ____ ____      _    ____  ",
-    r"|  _ \| ____|  _ \|  _ \ / ___|  _ \    / \  | __ ) ",
-    r"| |_) |  _| | |_) | |_) | |   | |_) |  / _ \ |  _ \ ",
-    r"|  __/| |___|  _ <|  __/| |___|  _ <  / ___ \| |_) |",
-    r"|_|   |_____|_| \_\_|    \____|_| \_\/_/   \_\____/ ",
-]
-
-ASCII_CRAB = [
-    r"            __     __",
-    r"      _____/  \___/  \_____",
-    r"    _/  _   _   _   _   _  \_",
-    r"   /___(_) (_) (_) (_) (_)___|",
-    r"       /  /\  /\  /\  /\  |",
-    r"      /__/  \/  \/  \/  \__|",
-    r"         \__    CRAB    __/",
-    r"            \__________/",
+BRAND_ART = [
+    "░░░░▄█▀▀▀░░░░░░░░▀▀▀█▄░░░░",
+    "░░▄███▄▄░░▀▄██▄▀░░▄▄███▄░░",
+    "░░▀██▄▄▄▄██PERP██▄▄▄▄██▀░░",
+    "░░░░░▄▄▄▄█░CRAB░█▄▄▄▄░░░░░",
+    "░░░░▞▐▀▐▀░▀██████▀░▀▌▚░░░░",
 ]
 
 
@@ -159,15 +148,105 @@ def bicolor_text(text: str, left_color: str = "green", right_color: str = "red")
     return left + right
 
 
-def render_dashboard_banner() -> None:
-    print(color_text("+" + "-" * 86 + "+", "dim"))
-    for line in FIGLET_BANNER:
-        print(color_text("| ", "dim") + color_text(line, "cyan") + color_text(" |", "dim"))
-    print(color_text("|" + " " * 88 + "|", "dim"))
-    for line in ASCII_CRAB:
-        padded = line.ljust(86)
-        print(color_text("| ", "dim") + bicolor_text(padded, "green", "red") + color_text(" |", "dim"))
-    print(color_text("+" + "-" * 86 + "+", "dim"))
+def render_brand_block() -> None:
+    for line in BRAND_ART:
+        print(bicolor_text(line, "green", "red"))
+    print()
+
+
+def truncate_text(value: Any, width: int) -> str:
+    text = str(value)
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text
+    if width == 1:
+        return text[:1]
+    return text[: width - 1] + "…"
+
+
+def build_table_lines(
+    headers: List[str],
+    rows: List[List[Any]],
+    aligns: Optional[List[str]] = None,
+    max_col_width: int = 44,
+) -> Tuple[List[str], List[int]]:
+    col_count = len(headers)
+    widths = [min(max(4, len(str(h))), max_col_width) for h in headers]
+
+    for row in rows:
+        for i in range(col_count):
+            cell = row[i] if i < len(row) else ""
+            widths[i] = min(max(widths[i], len(str(cell))), max_col_width)
+
+    def _format_row(row: List[Any]) -> str:
+        cells: List[str] = []
+        for i, width in enumerate(widths):
+            align = aligns[i] if aligns and i < len(aligns) else "left"
+            value = row[i] if i < len(row) else ""
+            text = truncate_text(value, width)
+            if align == "right":
+                padded = text.rjust(width)
+            elif align == "center":
+                padded = text.center(width)
+            else:
+                padded = text.ljust(width)
+            cells.append(f" {padded} ")
+        return "│" + "│".join(cells) + "│"
+
+    top = "┌" + "┬".join("─" * (w + 2) for w in widths) + "┐"
+    mid = "├" + "┼".join("─" * (w + 2) for w in widths) + "┤"
+    bot = "└" + "┴".join("─" * (w + 2) for w in widths) + "┘"
+
+    lines = [top, _format_row(headers), mid]
+    lines.extend(_format_row(r) for r in rows)
+    lines.append(bot)
+    return lines, widths
+
+
+def render_table(
+    title: str,
+    headers: List[str],
+    rows: List[List[Any]],
+    aligns: Optional[List[str]] = None,
+    row_colors: Optional[List[str]] = None,
+    max_col_width: int = 44,
+) -> None:
+    print(color_text(title, "bold"))
+    lines, _ = build_table_lines(headers, rows, aligns=aligns, max_col_width=max_col_width)
+    for idx, line in enumerate(lines):
+        if idx in {0, 2, len(lines) - 1}:
+            print(color_text(line, "dim"))
+            continue
+        data_row_idx = idx - 3
+        if row_colors and 0 <= data_row_idx < len(row_colors) and row_colors[data_row_idx]:
+            print(color_text(line, row_colors[data_row_idx]))
+        else:
+            print(line)
+    print()
+
+
+def wrap_text(text: str, width: int = 80) -> List[str]:
+    tokens = text.split()
+    if not tokens:
+        return [""]
+    lines: List[str] = []
+    current = ""
+    for token in tokens:
+        candidate = token if not current else f"{current} {token}"
+        if len(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        if len(token) > width:
+            lines.append(token[:width])
+            current = token[width:]
+        else:
+            current = token
+    if current:
+        lines.append(current)
+    return lines
 
 
 def short_token(value: Any) -> str:
@@ -298,102 +377,136 @@ def render_dashboard(
     if supports_color():
         print("[2J[H", end="")
 
-    render_dashboard_banner()
+    render_brand_block()
+
     mode_label = "paper" if paper_mode else "live"
-    header = f" Perpcrab Dashboard | mode={mode_label} | cycle={cycle_index}/{total_cycles} | {now_iso()} "
-    print(color_text(header, "bold"))
-    print(color_text("-" * min(120, len(header)), "dim"))
-
-    status_bits = [
-        f"wallet={mask_value(wallet)}",
-        f"model={args.llm_model}",
-        f"kelly={state.get('kelly_fraction', args.kelly_fraction)}",
-        f"risk_bps={state.get('risk_per_trade_bps')}",
-        f"open={len(open_positions)}",
-        f"closed={total_closed}",
-        f"W/L={wins}/{losses}",
-        f"win_rate={win_rate:.1%}",
-    ]
-    print(" | ".join(status_bits))
-
     if cycle_activity is None:
         cycle_activity = {"opened": 0, "closed": 0, "skipped": 0, "errors": 0}
-    activity_line = (
-        f"activity: opened={cycle_activity.get('opened', 0)} "
-        f"closed={cycle_activity.get('closed', 0)} "
-        f"skipped={cycle_activity.get('skipped', 0)} "
-        f"errors={cycle_activity.get('errors', 0)}"
-    )
-    print(color_text(activity_line, "yellow"))
 
+    session_rows = [
+        ["mode", mode_label],
+        ["cycle", f"{cycle_index}/{total_cycles}"],
+        ["timestamp", now_iso()],
+        ["wallet", mask_value(wallet)],
+        ["llm model", args.llm_model],
+        ["kelly", state.get("kelly_fraction", args.kelly_fraction)],
+        ["risk bps", state.get("risk_per_trade_bps")],
+        ["open positions", len(open_positions)],
+        ["closed trades", total_closed],
+        ["win/loss", f"{wins}/{losses}"],
+        ["win rate", f"{win_rate:.1%}"],
+    ]
+    render_table("Session", ["Field", "Value"], session_rows, max_col_width=56)
+
+    activity_rows = [
+        ["opened", cycle_activity.get("opened", 0)],
+        ["closed", cycle_activity.get("closed", 0)],
+        ["skipped", cycle_activity.get("skipped", 0)],
+        ["errors", cycle_activity.get("errors", 0)],
+    ]
+    render_table("Cycle Activity", ["Metric", "Count"], activity_rows, aligns=["left", "right"])
+
+    event_items = list(recent_events or [])[-8:]
     if last_error:
-        print(color_text(f"last_error: {last_error}", "red"))
+        event_items.append(f"ERROR: {last_error}")
     elif last_event:
-        print(color_text(f"last_event: {last_event}", "cyan"))
+        event_items.append(f"INFO: {last_event}")
     elif halted:
-        print(color_text("loop halted due to consecutive failures", "red"))
+        event_items.append("ERROR: loop halted due to consecutive failures")
 
-    print()
-    print(color_text("Recent Events", "bold"))
-    if recent_events:
-        for ev in recent_events[-6:]:
-            print(color_text(f"- {ev}", "dim"))
-    else:
-        print(color_text("(no events yet)", "dim"))
+    event_rows = [[idx + 1, ev] for idx, ev in enumerate(event_items[-8:])]
+    event_colors = []
+    for _, ev in event_rows:
+        low = str(ev).lower()
+        if "error" in low or "failure" in low:
+            event_colors.append("red")
+        elif "opened" in low or "take_profit" in low or "win" in low:
+            event_colors.append("green")
+        else:
+            event_colors.append("cyan")
+    if not event_rows:
+        event_rows = [[1, "(no events yet)"]]
+        event_colors = ["dim"]
+    render_table(
+        "Event Stream",
+        ["#", "Event"],
+        event_rows,
+        aligns=["right", "left"],
+        row_colors=event_colors,
+        max_col_width=80,
+    )
 
-    print()
-    print(color_text("Open Positions", "bold"))
-    if not open_positions:
-        print(color_text("(none)", "dim"))
-    else:
-        for pos in open_positions[-8:]:
-            pnl_bps = safe_float(pos.get("unrealized_pnl_bps"), 0.0)
-            pnl_usd = safe_float(pos.get("unrealized_pnl_usd"), 0.0)
-            pnl_color = "green" if pnl_usd >= 0 else "red"
-            line = (
-                f"OPEN  token={short_token(pos.get('tokenMint'))} "
-                f"side={pos.get('side')} lev={pos.get('leverage')} "
-                f"opened={pos.get('opened_at')} age_s={pos.get('age_seconds', '-') } "
-                f"uPnL={pnl_bps:.2f}bps/{pnl_usd:.2f}USD"
-            )
-            print(color_text(line, pnl_color))
+    open_rows: List[List[Any]] = []
+    open_colors: List[str] = []
+    for pos in open_positions[-10:]:
+        pnl_bps = safe_float(pos.get("unrealized_pnl_bps"), 0.0)
+        pnl_usd = safe_float(pos.get("unrealized_pnl_usd"), 0.0)
+        open_rows.append(
+            [
+                short_token(pos.get("tokenMint")),
+                pos.get("side"),
+                pos.get("leverage"),
+                pos.get("age_seconds", "-"),
+                f"{pnl_bps:.2f}",
+                f"{pnl_usd:.2f}",
+                pos.get("opened_at", "-"),
+            ]
+        )
+        open_colors.append("green" if pnl_usd >= 0 else "red")
+    if not open_rows:
+        open_rows = [["-", "-", "-", "-", "-", "-", "(none)"]]
+        open_colors = ["dim"]
+    render_table(
+        "Open Positions",
+        ["Token", "Side", "Lev", "Age(s)", "uPnL bps", "uPnL USD", "Opened"],
+        open_rows,
+        aligns=["left", "left", "right", "right", "right", "right", "left"],
+        row_colors=open_colors,
+        max_col_width=30,
+    )
 
-    print()
-    print(color_text("Recent Closed Positions", "bold"))
-    if not recent_closed:
-        print(color_text("(none)", "dim"))
-    else:
-        for row in recent_closed:
-            pnl_bps = safe_float(row.get("pnl_bps"), 0.0)
-            pnl_usd = safe_float(row.get("pnl_usd"), 0.0)
-            reason = str(row.get("close_reason") or "live_close")
-            if pnl_usd > 0:
-                base_color = "green"
-                result = "WIN"
-            else:
-                base_color = "red"
-                result = "LOSS"
-            if reason in {"take_profit"}:
-                reason_color = "green"
-            elif reason in {"stop_loss", "hard_stop"}:
-                reason_color = "red"
-            else:
-                reason_color = "yellow"
-            line = (
-                f"{result:<4} token={short_token(row.get('tokenMint'))} "
-                f"side={row.get('side')} opened={row.get('opened_at')} closed={row.get('closed_at')} "
-                f"pnl={pnl_bps:.2f}bps/{pnl_usd:.2f}USD "
-                f"reason={reason}"
-            )
-            print(color_text(line, base_color))
-            print(color_text(f"      close_reason={reason}", reason_color))
+    closed_rows: List[List[Any]] = []
+    closed_colors: List[str] = []
+    for row in recent_closed:
+        pnl_usd = safe_float(row.get("pnl_usd"), 0.0)
+        pnl_bps = safe_float(row.get("pnl_bps"), 0.0)
+        reason = str(row.get("close_reason") or "live_close")
+        result = "WIN" if pnl_usd > 0 else "LOSS"
+        closed_rows.append(
+            [
+                result,
+                short_token(row.get("tokenMint")),
+                reason,
+                f"{pnl_bps:.2f}",
+                f"{pnl_usd:.2f}",
+                row.get("opened_at", "-"),
+                row.get("closed_at", "-"),
+            ]
+        )
+        closed_colors.append("green" if pnl_usd > 0 else "red")
+    if not closed_rows:
+        closed_rows = [["-", "-", "-", "-", "-", "-", "(none)"]]
+        closed_colors = ["dim"]
+    render_table(
+        "Recent Closed Positions",
+        ["Result", "Token", "Reason", "PnL bps", "PnL USD", "Opened", "Closed"],
+        closed_rows,
+        aligns=["left", "left", "left", "right", "right", "left", "left"],
+        row_colors=closed_colors,
+        max_col_width=30,
+    )
 
-    print()
-    print(color_text("Latest LLM Reasoning", "bold"))
-    if latest_rationale:
-        print(latest_rationale[:700])
-    else:
-        print(color_text("(no rationale captured yet)", "dim"))
+    reasoning = latest_rationale if latest_rationale else "(no rationale captured yet)"
+    reasoning_lines = wrap_text(reasoning, width=78)
+    reasoning_rows = [[idx + 1, line] for idx, line in enumerate(reasoning_lines[:8])]
+    render_table(
+        "Latest LLM Reasoning",
+        ["Ln", "Text"],
+        reasoning_rows,
+        aligns=["right", "left"],
+        max_col_width=78,
+    )
+
 
 
 def request_json(
