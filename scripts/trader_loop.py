@@ -23,6 +23,25 @@ BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 PAPER_WALLET = "PAPER_TRADING_WALLET"
 PAPER_POSITIONS_PATH = DATA_DIR / "paper_positions.json"
 
+FIGLET_BANNER = [
+    r" ____  _____ ____  ____   ____ ____      _    ____  ",
+    r"|  _ \| ____|  _ \|  _ \ / ___|  _ \    / \  | __ ) ",
+    r"| |_) |  _| | |_) | |_) | |   | |_) |  / _ \ |  _ \ ",
+    r"|  __/| |___|  _ <|  __/| |___|  _ <  / ___ \| |_) |",
+    r"|_|   |_____|_| \_\_|    \____|_| \_\/_/   \_\____/ ",
+]
+
+ASCII_CRAB = [
+    r"            __     __",
+    r"      _____/  \___/  \_____",
+    r"    _/  _   _   _   _   _  \_",
+    r"   /___(_) (_) (_) (_) (_)___|",
+    r"       /  /\  /\  /\  /\  |",
+    r"      /__/  \/  \/  \/  \__|",
+    r"         \__    CRAB    __/",
+    r"            \__________/",
+]
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -129,6 +148,26 @@ def color_text(text: str, color: str) -> str:
     prefix = palette.get(color, "")
     suffix = "\033[0m" if prefix else ""
     return f"{prefix}{text}{suffix}"
+
+
+def bicolor_text(text: str, left_color: str = "green", right_color: str = "red") -> str:
+    if not text:
+        return text
+    mid = max(1, len(text) // 2)
+    left = color_text(text[:mid], left_color)
+    right = color_text(text[mid:], right_color)
+    return left + right
+
+
+def render_dashboard_banner() -> None:
+    print(color_text("+" + "-" * 86 + "+", "dim"))
+    for line in FIGLET_BANNER:
+        print(color_text("| ", "dim") + color_text(line, "cyan") + color_text(" |", "dim"))
+    print(color_text("|" + " " * 88 + "|", "dim"))
+    for line in ASCII_CRAB:
+        padded = line.ljust(86)
+        print(color_text("| ", "dim") + bicolor_text(padded, "green", "red") + color_text(" |", "dim"))
+    print(color_text("+" + "-" * 86 + "+", "dim"))
 
 
 def short_token(value: Any) -> str:
@@ -259,10 +298,11 @@ def render_dashboard(
     if supports_color():
         print("[2J[H", end="")
 
+    render_dashboard_banner()
     mode_label = "paper" if paper_mode else "live"
-    header = f"Perpcrab Dashboard | mode={mode_label} | cycle={cycle_index}/{total_cycles} | {now_iso()}"
+    header = f" Perpcrab Dashboard | mode={mode_label} | cycle={cycle_index}/{total_cycles} | {now_iso()} "
     print(color_text(header, "bold"))
-    print(color_text("=" * min(120, len(header)), "dim"))
+    print(color_text("-" * min(120, len(header)), "dim"))
 
     status_bits = [
         f"wallet={mask_value(wallet)}",
