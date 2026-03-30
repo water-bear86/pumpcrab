@@ -32,8 +32,23 @@ A Codex skill and runnable Python loop for PumpPerps automation with strict safe
 ```bash
 cd /tmp/perpcrab
 python3 scripts/quick_validate.py
-python3 scripts/trader_loop.py --cycles 1
+python3 scripts/trader_loop.py --dashboard --cycles 9999 --sleep-seconds 10
 ```
+
+The dashboard flow prompts for missing LLM key, wallet, cookie, and Kelly aggressiveness unless `--no-prompts` is passed.
+
+### Dashboard Mode
+
+```bash
+python3 scripts/trader_loop.py --dashboard --cycles 9999 --sleep-seconds 10
+```
+
+Dashboard shows:
+
+- Open positions (opened time, unrealized PnL, side, leverage)
+- Recent closed positions (TP/SL/time-stop/hard-stop reason and final PnL)
+- Win/loss and win-rate
+- Latest LLM reasoning output
 
 ### Paper mode examples
 

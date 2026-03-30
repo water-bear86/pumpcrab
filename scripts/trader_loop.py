@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
+import io
 import json
 import os
 import random
 import re
+import sys
 import time
 from datetime import datetime, timezone
+from getpass import getpass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, parse, request
@@ -103,6 +107,207 @@ def parse_iso_timestamp(value: Any) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def supports_color() -> bool:
+    return sys.stdout.isatty() and os.getenv("TERM", "") not in {"", "dumb"}
+
+
+def color_text(text: str, color: str) -> str:
+    if not supports_color():
+        return text
+    palette = {
+        "red": "\033[31m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "blue": "\033[34m",
+        "magenta": "\033[35m",
+        "cyan": "\033[36m",
+        "bold": "\033[1m",
+        "dim": "\033[2m",
+    }
+    prefix = palette.get(color, "")
+    suffix = "\033[0m" if prefix else ""
+    return f"{prefix}{text}{suffix}"
+
+
+def short_token(value: Any) -> str:
+    token = str(value or "-")
+    if len(token) <= 16:
+        return token
+    return f"{token[:6]}...{token[-6:]}"
+
+
+def mask_value(value: str, visible: int = 4) -> str:
+    if not value:
+        return "-"
+    if len(value) <= visible * 2:
+        return "*" * len(value)
+    return f"{value[:visible]}...{value[-visible:]}"
+
+
+def prompt_text(prompt: str, default: Optional[str] = None, secret: bool = False) -> str:
+    if not sys.stdin.isatty():
+        return default or ""
+    try:
+        raw = getpass(prompt) if secret else input(prompt)
+    except EOFError:
+        return default or ""
+    value = raw.strip()
+    if not value and default is not None:
+        return default
+    return value
+
+
+def prompt_runtime_setup(args: argparse.Namespace, paper_mode: bool) -> None:
+    if args.no_prompts or not sys.stdin.isatty():
+        return
+
+    if not args.llm_api_key:
+        args.llm_api_key = prompt_text("Enter LLM API key (input hidden): ", secret=True)
+
+    if not args.wallet.strip():
+        wallet_prompt = "Enter Solana public wallet (base58"
+        if paper_mode:
+            wallet_prompt += ", optional for paper mode"
+        wallet_prompt += "): "
+        args.wallet = prompt_text(wallet_prompt, default="")
+
+    if not args.cookie:
+        args.cookie = prompt_text("Enter PumpPerps session cookie (optional unless live mode): ", default="")
+
+    aggr = prompt_text(
+        "Kelly aggressiveness [low/medium/high/custom 0-1] (default medium): ",
+        default="medium",
+    ).strip().lower()
+    presets = {
+        "low": 0.15,
+        "conservative": 0.15,
+        "medium": 0.25,
+        "balanced": 0.25,
+        "high": 0.4,
+        "aggressive": 0.4,
+    }
+    if aggr in presets:
+        args.kelly_fraction = presets[aggr]
+    else:
+        try:
+            args.kelly_fraction = clamp(float(aggr), 0.0, 1.0)
+        except ValueError:
+            pass
+
+
+def render_dashboard(
+    args: argparse.Namespace,
+    state: Dict[str, Any],
+    paper_mode: bool,
+    wallet: str,
+    cycle_index: int,
+    total_cycles: int,
+    last_event: str = "",
+    last_error: str = "",
+    halted: bool = False,
+) -> None:
+    open_positions = load_paper_positions(PAPER_POSITIONS_PATH)
+    history = load_history(HISTORY_PATH)
+    closed = [x for x in history if x.get("status") == "closed"]
+
+    wins = sum(1 for x in closed if safe_float(x.get("pnl_usd"), 0.0) > 0)
+    losses = sum(1 for x in closed if safe_float(x.get("pnl_usd"), 0.0) <= 0)
+    total_closed = len(closed)
+    win_rate = (wins / total_closed) if total_closed else 0.0
+
+    recent_closed = closed[-8:]
+    latest_rationale = ""
+    for source in (reversed(open_positions), reversed(recent_closed)):
+        for row in source:
+            rationale = str(row.get("llm_rationale") or "").strip()
+            if rationale:
+                latest_rationale = rationale
+                break
+        if latest_rationale:
+            break
+
+    if supports_color():
+        print("\033[2J\033[H", end="")
+
+    mode_label = "paper" if paper_mode else "live"
+    header = f"Perpcrab Dashboard | mode={mode_label} | cycle={cycle_index}/{total_cycles} | {now_iso()}"
+    print(color_text(header, "bold"))
+    print(color_text("=" * min(120, len(header)), "dim"))
+
+    status_bits = [
+        f"wallet={mask_value(wallet)}",
+        f"model={args.llm_model}",
+        f"kelly={state.get('kelly_fraction', args.kelly_fraction)}",
+        f"risk_bps={state.get('risk_per_trade_bps')}",
+        f"open={len(open_positions)}",
+        f"closed={total_closed}",
+        f"W/L={wins}/{losses}",
+        f"win_rate={win_rate:.1%}",
+    ]
+    print(" | ".join(status_bits))
+
+    if last_error:
+        print(color_text(f"last_error: {last_error}", "red"))
+    elif last_event:
+        print(color_text(f"last_event: {last_event}", "cyan"))
+    elif halted:
+        print(color_text("loop halted due to consecutive failures", "red"))
+
+    print()
+    print(color_text("Open Positions", "bold"))
+    if not open_positions:
+        print(color_text("(none)", "dim"))
+    else:
+        for pos in open_positions[-8:]:
+            pnl_bps = safe_float(pos.get("unrealized_pnl_bps"), 0.0)
+            pnl_usd = safe_float(pos.get("unrealized_pnl_usd"), 0.0)
+            pnl_color = "green" if pnl_usd >= 0 else "red"
+            line = (
+                f"OPEN  token={short_token(pos.get('tokenMint'))} "
+                f"side={pos.get('side')} lev={pos.get('leverage')} "
+                f"opened={pos.get('opened_at')} age_s={pos.get('age_seconds', '-') } "
+                f"uPnL={pnl_bps:.2f}bps/{pnl_usd:.2f}USD"
+            )
+            print(color_text(line, pnl_color))
+
+    print()
+    print(color_text("Recent Closed Positions", "bold"))
+    if not recent_closed:
+        print(color_text("(none)", "dim"))
+    else:
+        for row in recent_closed:
+            pnl_bps = safe_float(row.get("pnl_bps"), 0.0)
+            pnl_usd = safe_float(row.get("pnl_usd"), 0.0)
+            reason = str(row.get("close_reason") or "live_close")
+            if pnl_usd > 0:
+                base_color = "green"
+                result = "WIN"
+            else:
+                base_color = "red"
+                result = "LOSS"
+            if reason in {"take_profit"}:
+                reason_color = "green"
+            elif reason in {"stop_loss", "hard_stop"}:
+                reason_color = "red"
+            else:
+                reason_color = "yellow"
+            line = (
+                f"{result:<4} token={short_token(row.get('tokenMint'))} "
+                f"side={row.get('side')} opened={row.get('opened_at')} closed={row.get('closed_at')} "
+                f"pnl={pnl_bps:.2f}bps/{pnl_usd:.2f}USD "
+                f"reason={reason}"
+            )
+            print(color_text(line, base_color))
+            print(color_text(f"      close_reason={reason}", reason_color))
+
+    print()
+    print(color_text("Latest LLM Reasoning", "bold"))
+    if latest_rationale:
+        print(latest_rationale[:700])
+    else:
+        print(color_text("(no rationale captured yet)", "dim"))
 
 
 def request_json(
@@ -820,6 +1025,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Force paper mode even when --live is passed")
     parser.add_argument("--improve-only", action="store_true")
     parser.add_argument("--record-sample", action="store_true", help="append a synthetic closed trade sample for testing adaptation")
+    parser.add_argument("--dashboard", action="store_true", help="render a live colored CLI dashboard")
+    parser.add_argument("--no-prompts", action="store_true", help="disable interactive prompts for key/wallet/kelly")
 
     parser.add_argument("--llm-model", default=os.getenv("PERPCRAB_LLM_MODEL", os.getenv("PUMPCRAB_LLM_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))))
     parser.add_argument("--llm-api-base", default=os.getenv("PERPCRAB_LLM_API_BASE", os.getenv("PUMPCRAB_LLM_API_BASE", "https://api.openai.com/v1")))
@@ -842,6 +1049,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    paper_mode = (not args.live) or args.dry_run
+    prompt_runtime_setup(args, paper_mode)
+
     args.kelly_fraction = clamp(args.kelly_fraction, 0.0, 1.0)
     args.min_risk_bps = max(1.0, args.min_risk_bps)
     args.max_risk_bps = max(args.min_risk_bps, args.max_risk_bps)
@@ -851,6 +1061,7 @@ def main() -> int:
     args.paper_min_hold_seconds = max(0.0, args.paper_min_hold_seconds)
     args.paper_max_hold_seconds = max(args.paper_min_hold_seconds, args.paper_max_hold_seconds)
     args.paper_max_open_positions = max(1, args.paper_max_open_positions)
+
     state = load_json(
         STATE_PATH,
         {
@@ -883,7 +1094,8 @@ def main() -> int:
         }
         append_history(HISTORY_PATH, sample)
         history.append(sample)
-        print("recorded sample trade:", sample)
+        if not args.dashboard:
+            print("recorded sample trade:", sample)
 
     if args.improve_only:
         new_state = improve(state, history)
@@ -891,16 +1103,16 @@ def main() -> int:
         print("improved strategy state:", json.dumps(new_state, indent=2, sort_keys=True))
         return 0
 
-    paper_mode = (not args.live) or args.dry_run
-
     wallet = args.wallet.strip()
     if paper_mode:
         if wallet and not is_probably_solana_pubkey(wallet):
-            print("paper mode: ignoring invalid wallet string and using placeholder wallet")
+            if not args.dashboard:
+                print("paper mode: ignoring invalid wallet string and using placeholder wallet")
             wallet = PAPER_WALLET
         elif not wallet:
             wallet = PAPER_WALLET
-            print("paper mode: no wallet provided, using placeholder wallet")
+            if not args.dashboard:
+                print("paper mode: no wallet provided, using placeholder wallet")
     else:
         if not wallet:
             raise RuntimeError("PERPCRAB_WALLET (or --wallet) is required for live trading")
@@ -912,28 +1124,89 @@ def main() -> int:
         if not args.cookie:
             raise RuntimeError("PERPCRAB_COOKIE (or --cookie) is required for live trading")
 
-    print(f"mode={'paper' if paper_mode else 'live'}")
+    total_cycles = max(1, args.cycles)
+    if not args.dashboard:
+        print(f"mode={'paper' if paper_mode else 'live'}")
+    else:
+        render_dashboard(
+            args,
+            state,
+            paper_mode,
+            wallet,
+            cycle_index=0,
+            total_cycles=total_cycles,
+            last_event="interactive setup complete",
+        )
 
     consecutive_failures = 0
     halted = False
-    for i in range(max(1, args.cycles)):
-        print(f"cycle {i + 1}/{args.cycles} @ {now_iso()}")
+    last_event = ""
+    last_error = ""
+    current_cycle = 0
+
+    for i in range(total_cycles):
+        current_cycle = i + 1
+        if not args.dashboard:
+            print(f"cycle {current_cycle}/{args.cycles} @ {now_iso()}")
+
+        last_error = ""
         try:
-            cycle(args, state, paper_mode, wallet)
+            if args.dashboard:
+                cycle_buffer = io.StringIO()
+                with contextlib.redirect_stdout(cycle_buffer):
+                    cycle(args, state, paper_mode, wallet)
+                cycle_output = cycle_buffer.getvalue().strip()
+                if cycle_output:
+                    last_event = cycle_output.splitlines()[-1]
+            else:
+                cycle(args, state, paper_mode, wallet)
         except RuntimeError as exc:
             consecutive_failures += 1
-            print(f"cycle failure {consecutive_failures}/3: {exc}")
+            last_error = str(exc)
+            if not args.dashboard:
+                print(f"cycle failure {consecutive_failures}/3: {exc}")
             if consecutive_failures > 2:
-                print("stopping trader loop: more than two consecutive failures")
+                if not args.dashboard:
+                    print("stopping trader loop: more than two consecutive failures")
                 halted = True
-                break
         else:
             consecutive_failures = 0
-        time.sleep(max(args.sleep_seconds, 0))
+
+        if args.dashboard:
+            render_dashboard(
+                args,
+                state,
+                paper_mode,
+                wallet,
+                cycle_index=current_cycle,
+                total_cycles=total_cycles,
+                last_event=last_event,
+                last_error=last_error,
+                halted=halted,
+            )
+
+        if halted:
+            break
+
+        if i + 1 < total_cycles:
+            time.sleep(max(args.sleep_seconds, 0))
 
     new_state = improve(state, load_history(HISTORY_PATH))
     save_json(STATE_PATH, new_state)
-    print("saved strategy state")
+    if args.dashboard:
+        render_dashboard(
+            args,
+            new_state,
+            paper_mode,
+            wallet,
+            cycle_index=current_cycle,
+            total_cycles=total_cycles,
+            last_event="saved strategy state",
+            halted=halted,
+        )
+    else:
+        print("saved strategy state")
+
     return 1 if halted else 0
 
 
