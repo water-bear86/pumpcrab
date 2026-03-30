@@ -881,10 +881,9 @@ def llm_trade_decision(
         "instruction": "Pick one candidate tokenMint from candidates and a side.",
     }
 
-    body = {
+    base_body = {
         "model": args.llm_model,
         "temperature": 0.1,
-        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload)},
@@ -892,27 +891,51 @@ def llm_trade_decision(
     }
 
     endpoint = args.llm_api_base.rstrip("/") + "/chat/completions"
-    req = request.Request(
-        endpoint,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "perpcrab/1.4",
-        },
-        method="POST",
-    )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "perpcrab/1.4",
+    }
 
-    try:
-        with request.urlopen(req, timeout=args.llm_timeout) as resp:
-            raw = resp.read().decode("utf-8")
-            payload = json.loads(raw)
-    except error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"LLM HTTP {exc.code}: {raw[:500]}") from exc
-    except (error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"LLM request failed: {exc}") from exc
+    payload = None
+    attempt_bodies = [
+        dict(base_body, response_format={"type": "json_object"}),
+        dict(base_body),
+    ]
+
+    for attempt_index, body in enumerate(attempt_bodies):
+        req = request.Request(
+            endpoint,
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=args.llm_timeout) as resp:
+                raw = resp.read().decode("utf-8")
+                payload = json.loads(raw)
+                break
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            lower = raw.lower()
+            unsupported_response_format = (
+                exc.code == 400
+                and attempt_index == 0
+                and (
+                    "response_format" in lower
+                    or "json_object" in lower
+                    or "unsupported" in lower
+                )
+            )
+            if unsupported_response_format:
+                continue
+            raise RuntimeError(f"LLM HTTP {exc.code}: {raw[:500]}") from exc
+        except (error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"LLM request failed: {exc}") from exc
+
+    if payload is None:
+        raise RuntimeError("LLM request failed: no response payload")
 
     try:
         content = payload["choices"][0]["message"]["content"]
@@ -1337,7 +1360,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-prompts", action="store_true", help="disable interactive prompts for key/wallet/kelly")
 
     parser.add_argument("--llm-model", default=os.getenv("PERPCRAB_LLM_MODEL", os.getenv("PUMPCRAB_LLM_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))))
-    parser.add_argument("--llm-api-base", default=os.getenv("PERPCRAB_LLM_API_BASE", os.getenv("PUMPCRAB_LLM_API_BASE", "https://api.openai.com/v1")))
+    parser.add_argument(
+        "--llm-api-base",
+        default=os.getenv(
+            "PERPCRAB_LLM_API_BASE",
+            os.getenv(
+                "PUMPCRAB_LLM_API_BASE",
+                os.getenv("OPENAI_BASE_URL", os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")),
+            ),
+        ),
+    )
     parser.add_argument("--llm-api-key", default=os.getenv("PERPCRAB_OPENAI_API_KEY", os.getenv("PUMPCRAB_OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))))
     parser.add_argument("--llm-timeout", type=float, default=float(os.getenv("PERPCRAB_LLM_TIMEOUT", os.getenv("PUMPCRAB_LLM_TIMEOUT", "25"))))
     parser.add_argument("--llm-candidate-count", type=int, default=int(os.getenv("PERPCRAB_LLM_CANDIDATE_COUNT", os.getenv("PUMPCRAB_LLM_CANDIDATE_COUNT", "12"))))
